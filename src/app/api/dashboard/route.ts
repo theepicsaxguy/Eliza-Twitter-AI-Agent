@@ -3,33 +3,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { TwitterApiReadWrite } from '@/lib/twitterApi';
 import { getRecentMentions, fetchTrendingTopics } from '@/lib/TwitterBot';
-import { Redis } from '@upstash/redis';
+import * as Redis from "ioredis";
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+const redis = new Redis(); 
 
 export async function GET(request: NextRequest) {
   try {
-    // 1. Fetch account details
+    // Fetch account details
     const me = await TwitterApiReadWrite.v2.me();
     const userId = me?.data?.id;
 
-    // 2. Fetch last 10 posted tweets
+    // Fetch last 10 posted tweets
     const timeline = userId
       ? await TwitterApiReadWrite.v2.userTimeline(userId, { max_results: 10 })
       : null;
     const postedTweets = timeline?.data?.data || [];
 
-    // 3. Fetch recent mentions
+    // Fetch recent mentions
     const mentions = await getRecentMentions();
 
-    // 4. Fetch trending topics
+    // Fetch trending topics
     const trending = await fetchTrendingTopics();
 
-    // 5. Fetch tweet count from Redis
-    const tweetCountRaw = await redis.get<string>('tweetcount');
+    // Fetch tweet count from Redis
+    const tweetCountRaw = await redis.get('tweetcount');
     let tweetCountData: { count: number; lastreset: string } | null = null;
     if (tweetCountRaw) {
       tweetCountData = JSON.parse(tweetCountRaw);

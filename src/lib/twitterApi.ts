@@ -2,17 +2,14 @@ import { TwitterApi } from 'twitter-api-v2';
 import { z } from 'zod';
 import { tool } from "@langchain/core/tools";
 import { executablePath } from 'puppeteer';
-
 import * as puppeteer from 'puppeteer-core';
-
 import chromium from '@sparticuz/chromium';
 import puppeteerCore from 'puppeteer-core';
 
-const twitterApiKey = process.env.NEXT_PUBLIC_TWITTER_API_KEY;
-const twitterApiSecret = process.env.NEXT_PUBLIC_TWITTER_API_SECRET;
-const twitterAccessToken = process.env.NEXT_PUBLIC_TWITTER_ACCESS_TOKEN;
-const twitterAccessTokenSecret = process.env.NEXT_PUBLIC_TWITTER_ACCESS_TOKEN_SECRET;
-
+const twitterApiKey = process.env.TWITTER_API_KEY;
+const twitterApiSecret = process.env.TWITTER_API_SECRET;
+const twitterAccessToken = process.env.TWITTER_ACCESS_TOKEN;
+const twitterAccessTokenSecret = process.env.TWITTER_ACCESS_TOKEN_SECRET;
 
 export const TwitterApiReadWrite = new TwitterApi({
   appKey: twitterApiKey!,
@@ -23,9 +20,22 @@ export const TwitterApiReadWrite = new TwitterApi({
 
 const rw = TwitterApiReadWrite.readWrite;
 
+async function handleRateLimit<T>(fn: () => Promise<T>, retries = 3, delay = 15000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (error.code === 429 && retries > 0) {
+      const retryAfter = error.rateLimit?.reset || delay;
+      console.warn(`Rate limited. Retrying in ${retryAfter}ms...`);
+      await new Promise((res) => setTimeout(res, retryAfter));
+      return handleRateLimit(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
 export const postTool = tool(async (text) => {
-  const post = await rw.v2.tweet(text);
-  return post?.data;
+  return await handleRateLimit(() => rw.v2.tweet(text));
 }, {
   name: 'post_tool',
   description: 'Post a tweet on Twitter',
@@ -35,18 +45,18 @@ export const postTool = tool(async (text) => {
 });
 
 export const replyTool = tool(async ({ reply, tweetId }) => {
-  return await rw.v2.reply(reply, tweetId);
+  return await handleRateLimit(() => rw.v2.reply(reply, tweetId));
 }, {
   name: 'reply_tool',
-  description: 'create replies',
+  description: 'Create replies',
   schema: z.object({
-    reply: z.string().describe("your replies"),
-    tweetId: z.string().describe("id of the tweet you are replying to."),
+    reply: z.string().describe("Your reply"),
+    tweetId: z.string().describe("ID of the tweet you are replying to."),
   })
 });
 
 export const mentionTool = tool(async () => {
-  return await rw.v1.mentionTimeline();
+  return await handleRateLimit(() => rw.v1.mentionTimeline());
 }, {
   name: "mention_tool",
   description: 'get all mentions',
@@ -103,11 +113,11 @@ export const scrapDataOnlineTool = tool(async ({ url }) => {
       browser = await puppeteer.launch({
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
         headless: true,
-        executablePath:executablePath()
+        executablePath: executablePath()
       });
-    } else if (process.env.NODE_ENV === 'production') {
+    } else {
       console.log('Production browser: ');
-      browser! = await puppeteerCore.launch({
+      browser = await puppeteerCore.launch({
         args: chromium.args,
         defaultViewport: chromium.defaultViewport,
         executablePath: await chromium.executablePath(),
@@ -115,31 +125,29 @@ export const scrapDataOnlineTool = tool(async ({ url }) => {
       });
     }
 
-    const page = await browser!.newPage();
+    if (!browser) throw new Error("Failed to launch browser");
+
+    const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // Explicitly typing the evaluate function
-    const headlines = await page.evaluate((): string[] => {
-      const titles: string[] = [];
-      const elements = document.querySelectorAll('h2,.post-card__title, .article-card__title');
-      elements.forEach((el) => titles.push(el?.textContent?.trim() ?? ''));
-      return titles;
+    const headlines = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('h2, .post-card__title, .article-card__title'))
+        .map(el => el.textContent?.trim() || '')
+        .filter(Boolean);
     });
 
-    await browser!.close();
     return headlines;
   } catch (error) {
     console.error(error);
-    if (browser) {
-      await browser.close();  // Ensure browser is closed in case of error
-    }
-    return { message: "something went wrong", error: error };
+    return { message: "Scraping failed", error: error.toString() };
+  } finally {
+    if (browser) await browser.close();
   }
 }, {
   name: "scrapeDataOnline_tool",
-  description: "scrape data online",
+  description: "Scrape data online",
   schema: z.object({
-    url: z.string().describe("the url of the website to scrape data from."),
+    url: z.string().describe("The URL of the website to scrape data from."),
   }),
 });
