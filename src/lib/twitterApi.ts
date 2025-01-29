@@ -14,7 +14,7 @@ const twitterAccessToken = process.env.NEXT_PUBLIC_TWITTER_ACCESS_TOKEN;
 const twitterAccessTokenSecret = process.env.NEXT_PUBLIC_TWITTER_ACCESS_TOKEN_SECRET;
 
 
-const TwitterApiReadWrite = new TwitterApi({
+export const TwitterApiReadWrite = new TwitterApi({
   appKey: twitterApiKey!,
   appSecret: twitterApiSecret!,
   accessToken: twitterAccessToken!,
